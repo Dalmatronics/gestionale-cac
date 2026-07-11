@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spese — Gestionale</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script src="menu.js"></script>
+<link rel="stylesheet" href="tema.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); }
+  header { position: fixed; top:0; left:0; right:0; z-index: 900; background: var(--accent-dark); color: white; padding: 16px 20px; }
+  header h1 { font-size: 18px; margin: 0; }
+  main { max-width: 640px; margin: 0 auto; padding: 76px 16px 60px; }
+
+  .card { background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 24px; }
+  .card h2 { font-size: 16px; margin: 0 0 18px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  input, textarea, select {
+    width: 100%; padding: 11px 13px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 15px; margin-bottom: 14px; font-family: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  .riga-doppia { display: flex; gap: 12px; }
+  .riga-doppia > div { flex: 1; }
+
+  .row-buttons { display: flex; gap: 10px; }
+  button { padding: 12px 18px; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--accent-dark); }
+  button.secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  button.secondary:hover { background: #f0f0f0; }
+
+  .msg { margin-top: 10px; font-size: 14px; }
+  .msg.error { color: var(--error); }
+  .msg.ok { color: var(--accent-dark); }
+
+  .spesa-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .spesa-row:hover { background: #f8faf9; }
+  .spesa-row:last-child { border-bottom: none; }
+  .spesa-descrizione { font-weight: 600; font-size: 15px; }
+  .spesa-dettaglio { font-size: 13px; color: var(--text-muted); }
+  .spesa-importo { font-weight: 700; font-size: 15px; color: var(--error); white-space: nowrap; }
+
+  #lista-empty { color: var(--text-muted); font-size: 14px; padding: 8px 4px; }
+</style>
+</head>
+<body style="visibility:hidden;">
+
+<header><h1>Spese</h1></header>
+
+<main>
+
+  <div class="card">
+    <h2 id="card-titolo">Aggiungi spesa</h2>
+    <form id="form-spesa">
+      <label for="descrizione">Descrizione *</label>
+      <input type="text" id="descrizione" required>
+
+      <div class="riga-doppia">
+        <div>
+          <label for="categoria">Categoria</label>
+          <select id="categoria_id"></select>
+        </div>
+        <div>
+          <label for="importo">Importo (€) *</label>
+          <input type="number" id="importo" step="0.01" min="0" required>
+        </div>
+      </div>
+
+      <label for="data">Data</label>
+      <input type="date" id="data">
+
+      <div class="row-buttons">
+        <button type="submit" id="btn-salva">Aggiungi spesa</button>
+        <button type="button" class="secondary" id="btn-annulla" style="display:none;">Annulla modifica</button>
+      </div>
+      <div class="msg" id="form-msg"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Spese registrate</h2>
+    <div id="lista-spese"></div>
+    <div id="lista-empty" style="display:none;">Nessuna spesa ancora registrata.</div>
+  </div>
+
+</main>
+
+<script>
+  let idInModifica = null;
+
+  sb.auth.getSession().then(async ({ data: { session } }) => {
+    if (!session) { window.location.href = "index.html"; return; }
+    document.body.style.visibility = "visible";
+    document.getElementById('data').value = new Date().toISOString().slice(0, 10);
+    await caricaCategorie();
+    caricaSpese();
+  });
+
+  async function caricaCategorie() {
+    const { data: categorie } = await sb.from('categorie_spesa').select('id, nome').order('nome');
+    const sel = document.getElementById('categoria_id');
+    (categorie || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id; opt.textContent = c.nome;
+      sel.appendChild(opt);
+    });
+  }
+
+  const form = document.getElementById('form-spesa');
+  const msg = document.getElementById('form-msg');
+  const btnAnnulla = document.getElementById('btn-annulla');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = "";
+
+    const datiSpesa = {
+      descrizione: document.getElementById('descrizione').value.trim(),
+      categoria_id: document.getElementById('categoria_id').value || null,
+      importo: parseFloat(document.getElementById('importo').value),
+      data: document.getElementById('data').value,
+    };
+
+    let error;
+    if (idInModifica) {
+      ({ error } = await sb.from('spese').update(datiSpesa).eq('id', idInModifica));
+    } else {
+      ({ error } = await sb.from('spese').insert(datiSpesa));
+    }
+
+    if (error) {
+      msg.textContent = "Errore: " + error.message;
+      msg.className = "msg error";
+      return;
+    }
+
+    msg.textContent = idInModifica ? "Spesa aggiornata." : "Spesa aggiunta.";
+    msg.className = "msg ok";
+    uscidaModifica();
+    caricaSpese();
+  });
+
+  btnAnnulla.addEventListener('click', uscidaModifica);
+
+  function uscidaModifica() {
+    idInModifica = null;
+    form.reset();
+    document.getElementById('data').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('card-titolo').textContent = "Aggiungi spesa";
+    document.getElementById('btn-salva').textContent = "Aggiungi spesa";
+    btnAnnulla.style.display = "none";
+  }
+
+  async function caricaSpese() {
+    const { data: spese, error } = await sb
+      .from('spese')
+      .select('*, categorie_spesa(nome)')
+      .order('data', { ascending: false });
+
+    const lista = document.getElementById('lista-spese');
+    const vuoto = document.getElementById('lista-empty');
+    lista.innerHTML = "";
+
+    if (error || !spese || spese.length === 0) {
+      vuoto.style.display = "block";
+      return;
+    }
+    vuoto.style.display = "none";
+
+    spese.forEach(s => {
+      const div = document.createElement('div');
+      div.className = "spesa-row";
+      div.innerHTML = `
+        <div>
+          <div class="spesa-descrizione">${s.descrizione}</div>
+          <div class="spesa-dettaglio">${new Date(s.data).toLocaleDateString('it-IT')} · ${s.categorie_spesa ? s.categorie_spesa.nome : ''}</div>
+        </div>
+        <div class="spesa-importo">€ ${Number(s.importo).toFixed(2)}</div>
+      `;
+      div.addEventListener('click', () => entraInModifica(s));
+      lista.appendChild(div);
+    });
+  }
+
+  function entraInModifica(s) {
+    idInModifica = s.id;
+    document.getElementById('descrizione').value = s.descrizione || '';
+    document.getElementById('categoria_id').value = s.categoria_id || '';
+    document.getElementById('importo').value = s.importo;
+    document.getElementById('data').value = s.data;
+
+    document.getElementById('card-titolo').textContent = "Modifica spesa";
+    document.getElementById('btn-salva').textContent = "Salva modifiche";
+    btnAnnulla.style.display = "inline-block";
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+
+</body>
+</html>

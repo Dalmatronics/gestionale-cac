@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clienti — Gestionale</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script src="menu.js"></script>
+<link rel="stylesheet" href="tema.css">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+  }
+  header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 900;
+    background: var(--accent-dark);
+    color: white;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header a {
+    color: white;
+    text-decoration: none;
+    font-size: 14px;
+    opacity: 0.85;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+
+  main {
+    max-width: 640px;
+    margin: 0 auto;
+    padding: 76px 16px 60px;
+  }
+
+  .card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+    margin-bottom: 24px;
+  }
+  .card h2 {
+    font-size: 16px;
+    margin: 0 0 18px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 5px;
+  }
+  input, textarea {
+    width: 100%;
+    padding: 11px 13px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 15px;
+    margin-bottom: 14px;
+    font-family: inherit;
+  }
+  input:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .row-buttons { display: flex; gap: 10px; }
+  button {
+    padding: 12px 18px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: var(--accent-dark); }
+  button.secondary {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  button.secondary:hover { background: #f0f0f0; }
+
+  .msg { margin-top: 10px; font-size: 14px; }
+  .msg.error { color: var(--error); }
+  .msg.ok { color: var(--accent-dark); }
+
+  .cliente-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .cliente-row:hover { background: #f8faf9; }
+  .cliente-row:last-child { border-bottom: none; }
+  .cliente-nome { font-weight: 600; font-size: 15px; }
+  .cliente-contatto { font-size: 13px; color: var(--text-muted); }
+
+  .cliente-azioni { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .btn-nuovo-ordine {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 15%, white 85%);
+    color: var(--accent-dark);
+    text-decoration: none;
+  }
+  .btn-nuovo-ordine:hover { background: color-mix(in srgb, var(--accent) 30%, white 70%); }
+  .btn-nuovo-ordine svg { width: 18px; height: 18px; }
+
+  #lista-empty { color: var(--text-muted); font-size: 14px; padding: 8px 4px; }
+</style>
+</head>
+<body style="visibility:hidden;">
+
+<header>
+  <h1 id="form-titolo">Nuovo cliente</h1>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2 id="card-titolo">Aggiungi cliente</h2>
+    <form id="form-cliente">
+      <label for="nome_cognome">Nome / Ragione sociale *</label>
+      <input type="text" id="nome_cognome" required>
+
+      <label for="telefono">Telefono</label>
+      <input type="text" id="telefono">
+
+      <label for="email">Email</label>
+      <input type="email" id="email">
+
+      <label for="indirizzo">Indirizzo</label>
+      <input type="text" id="indirizzo">
+
+      <label for="note">Note</label>
+      <textarea id="note" rows="2"></textarea>
+
+      <div class="row-buttons">
+        <button type="submit" id="btn-salva">Aggiungi cliente</button>
+        <button type="button" class="secondary" id="btn-annulla" style="display:none;">Annulla modifica</button>
+      </div>
+      <div class="msg" id="form-msg"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Clienti esistenti</h2>
+    <input type="text" id="filtro-clienti" placeholder="Cerca per nome…" aria-label="Cerca cliente">
+    <div id="lista-clienti"></div>
+    <div id="lista-empty" style="display:none;">Nessun cliente ancora inserito.</div>
+  </div>
+
+</main>
+
+<script>
+  let idInModifica = null; // null = stiamo aggiungendo, altrimenti id del cliente in modifica
+  let clientiCache = [];
+
+  // Protezione pagina: se non sei loggato, torna al login
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (!session) {
+      window.location.href = "index.html";
+    } else {
+      document.body.style.visibility = "visible";
+      caricaClienti();
+    }
+  });
+
+  const form = document.getElementById('form-cliente');
+  const msg = document.getElementById('form-msg');
+  const btnAnnulla = document.getElementById('btn-annulla');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = "";
+
+    const datiCliente = {
+      nome_cognome: document.getElementById('nome_cognome').value.trim(),
+      telefono: document.getElementById('telefono').value.trim() || null,
+      email: document.getElementById('email').value.trim() || null,
+      indirizzo: document.getElementById('indirizzo').value.trim() || null,
+      note: document.getElementById('note').value.trim() || null,
+    };
+
+    let error;
+    if (idInModifica) {
+      ({ error } = await sb.from('clienti').update(datiCliente).eq('id', idInModifica));
+    } else {
+      ({ error } = await sb.from('clienti').insert(datiCliente));
+    }
+
+    if (error) {
+      msg.textContent = "Errore: " + error.message;
+      msg.className = "msg error";
+      return;
+    }
+
+    msg.textContent = idInModifica ? "Cliente aggiornato." : "Cliente aggiunto.";
+    msg.className = "msg ok";
+    uscidaModifica();
+    caricaClienti();
+  });
+
+  btnAnnulla.addEventListener('click', uscidaModifica);
+
+  document.getElementById('filtro-clienti').addEventListener('input', (e) => {
+    const testo = e.target.value.trim().toLowerCase();
+    const filtrati = testo
+      ? clientiCache.filter(c => (c.nome_cognome || '').toLowerCase().includes(testo))
+      : clientiCache;
+    renderListaClienti(filtrati, testo);
+  });
+
+  function uscidaModifica() {
+    idInModifica = null;
+    form.reset();
+    document.getElementById('card-titolo').textContent = "Aggiungi cliente";
+    document.getElementById('btn-salva').textContent = "Aggiungi cliente";
+    btnAnnulla.style.display = "none";
+  }
+
+  async function caricaClienti() {
+    const { data: clienti, error } = await sb
+      .from('clienti')
+      .select('*')
+      .order('nome_cognome', { ascending: true });
+
+    clientiCache = (!error && clienti) ? clienti : [];
+    renderListaClienti(clientiCache);
+  }
+
+  function renderListaClienti(clienti, filtroAttivo) {
+    const lista = document.getElementById('lista-clienti');
+    const vuoto = document.getElementById('lista-empty');
+    lista.innerHTML = "";
+
+    if (!clienti || clienti.length === 0) {
+      vuoto.textContent = filtroAttivo
+        ? "Nessun cliente trovato."
+        : "Nessun cliente ancora inserito.";
+      vuoto.style.display = "block";
+      return;
+    }
+    vuoto.style.display = "none";
+
+    clienti.forEach(c => {
+      const div = document.createElement('div');
+      div.className = "cliente-row";
+      div.innerHTML = `
+        <div>
+          <div class="cliente-nome">${c.nome_cognome}</div>
+          <div class="cliente-contatto">${c.telefono || ''} ${c.email ? '· ' + c.email : ''}</div>
+        </div>
+        <div class="cliente-azioni">
+          <a href="ordini.html?cliente_id=${c.id}" class="btn-nuovo-ordine" title="Nuovo ordine per ${c.nome_cognome}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </a>
+          <span style="color:var(--text-muted); font-size:13px;">Modifica ›</span>
+        </div>
+      `;
+      div.querySelector('.btn-nuovo-ordine').addEventListener('click', (e) => e.stopPropagation());
+      div.addEventListener('click', () => entraInModifica(c));
+      lista.appendChild(div);
+    });
+  }
+
+  function entraInModifica(c) {
+    idInModifica = c.id;
+    document.getElementById('nome_cognome').value = c.nome_cognome || '';
+    document.getElementById('telefono').value = c.telefono || '';
+    document.getElementById('email').value = c.email || '';
+    document.getElementById('indirizzo').value = c.indirizzo || '';
+    document.getElementById('note').value = c.note || '';
+
+    document.getElementById('card-titolo').textContent = "Modifica cliente";
+    document.getElementById('btn-salva').textContent = "Salva modifiche";
+    btnAnnulla.style.display = "inline-block";
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+
+</body>
+</html>

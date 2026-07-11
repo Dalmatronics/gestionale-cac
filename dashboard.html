@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Gestionale</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="supabase-client.js"></script>
+<script src="menu.js"></script>
+<link rel="stylesheet" href="tema.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); }
+  header { position: fixed; top:0; left:0; right:0; z-index: 900; background: var(--accent-dark); color: white; padding: 16px 20px; }
+  header h1 { font-size: 18px; margin: 0; }
+  main { max-width: 860px; margin: 0 auto; padding: 76px 16px 60px; }
+
+  .riepilogo { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .numero-card { background: var(--card); border-radius: 12px; padding: 18px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+  .numero-card .etichetta { font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  .numero-card .valore { font-size: 24px; font-weight: 700; margin-top: 6px; }
+  .numero-card.utile .valore.positivo { color: var(--accent-dark); }
+  .numero-card.utile .valore.negativo { color: var(--error); }
+
+  .card { background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 24px; }
+  .card h2 { font-size: 15px; margin: 0 0 18px; }
+  .card canvas { max-height: 280px; }
+
+  #stato-vuoto { color: var(--text-muted); font-size: 14px; text-align: center; padding: 40px 0; }
+</style>
+</head>
+<body style="visibility:hidden;">
+
+<header><h1>Dashboard</h1></header>
+
+<main>
+
+  <div class="riepilogo">
+    <div class="numero-card">
+      <div class="etichetta">Fatturato</div>
+      <div class="valore" id="val-fatturato">€ 0</div>
+    </div>
+    <div class="numero-card">
+      <div class="etichetta">Incassato</div>
+      <div class="valore" id="val-incassato">€ 0</div>
+    </div>
+    <div class="numero-card">
+      <div class="etichetta">Spese</div>
+      <div class="valore" id="val-spese">€ 0</div>
+    </div>
+    <div class="numero-card utile">
+      <div class="etichetta">Utile (fatturato − spese)</div>
+      <div class="valore" id="val-utile">€ 0</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Andamento mensile — fatturato vs spese</h2>
+    <canvas id="chart-andamento"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Fatturato per canale di vendita</h2>
+    <canvas id="chart-canali"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Spese per categoria</h2>
+    <canvas id="chart-spese-categoria"></canvas>
+  </div>
+
+</main>
+
+<script>
+  sb.auth.getSession().then(async ({ data: { session } }) => {
+    if (!session) { window.location.href = "index.html"; return; }
+    document.body.style.visibility = "visible";
+    await caricaDashboard();
+  });
+
+  const EURO = (n) => "€ " + n.toLocaleString('it-IT', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const LABEL_CANALE = { social: "Social", market: "Market", telefono: "Telefono", email: "Email" };
+  const COLORI = ['#89A279', '#873F16', '#E8703B', '#8C8477', '#F2C6A5', '#4f6b45'];
+
+  async function caricaDashboard() {
+    const [{ data: ordini }, { data: spese }] = await Promise.all([
+      sb.from('ordini').select('data, canale, stato, importo_pagato, righe_ordine(quantita, prezzo_applicato)'),
+      sb.from('spese').select('data, importo, categorie_spesa(nome)'),
+    ]);
+
+    const ordiniValidi = (ordini || []).filter(o => o.stato !== 'annullato');
+
+    // --- Numeri di riepilogo ---
+    let fatturato = 0, incassato = 0;
+    ordiniValidi.forEach(o => {
+      fatturato += (o.righe_ordine || []).reduce((acc, r) => acc + r.quantita * r.prezzo_applicato, 0);
+      incassato += Number(o.importo_pagato) || 0;
+    });
+    const speseTotali = (spese || []).reduce((acc, s) => acc + Number(s.importo), 0);
+    const utile = fatturato - speseTotali;
+
+    document.getElementById('val-fatturato').textContent = EURO(fatturato);
+    document.getElementById('val-incassato').textContent = EURO(incassato);
+    document.getElementById('val-spese').textContent = EURO(speseTotali);
+    const valUtile = document.getElementById('val-utile');
+    valUtile.textContent = EURO(utile);
+    valUtile.classList.add(utile >= 0 ? 'positivo' : 'negativo');
+
+    disegnaAndamentoMensile(ordiniValidi, spese || []);
+    disegnaCanali(ordiniValidi);
+    disegnaSpeseCategoria(spese || []);
+  }
+
+  // Raggruppa un array per "mese" (YYYY-MM) sommando un valore
+  function raggruppaPerMese(righe, estraiData, estraiValore) {
+    const mappa = {};
+    righe.forEach(r => {
+      const mese = estraiData(r).slice(0, 7); // "2026-07"
+      mappa[mese] = (mappa[mese] || 0) + estraiValore(r);
+    });
+    return mappa;
+  }
+
+  function disegnaAndamentoMensile(ordini, spese) {
+    const fatturatoPerMese = raggruppaPerMese(
+      ordini, o => o.data,
+      o => (o.righe_ordine || []).reduce((acc, r) => acc + r.quantita * r.prezzo_applicato, 0)
+    );
+    const spesePerMese = raggruppaPerMese(spese, s => s.data, s => Number(s.importo));
+
+    const mesi = [...new Set([...Object.keys(fatturatoPerMese), ...Object.keys(spesePerMese)])].sort();
+
+    new Chart(document.getElementById('chart-andamento'), {
+      type: 'line',
+      data: {
+        labels: mesi,
+        datasets: [
+          { label: 'Fatturato', data: mesi.map(m => fatturatoPerMese[m] || 0), borderColor: '#3d6b5c', backgroundColor: '#3d6b5c', tension: 0.2 },
+          { label: 'Spese', data: mesi.map(m => spesePerMese[m] || 0), borderColor: '#b3452d', backgroundColor: '#b3452d', tension: 0.2 },
+        ]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+    });
+  }
+
+  function disegnaCanali(ordini) {
+    const mappa = {};
+    ordini.forEach(o => {
+      const tot = (o.righe_ordine || []).reduce((acc, r) => acc + r.quantita * r.prezzo_applicato, 0);
+      const canale = LABEL_CANALE[o.canale] || o.canale || 'Non specificato';
+      mappa[canale] = (mappa[canale] || 0) + tot;
+    });
+
+    new Chart(document.getElementById('chart-canali'), {
+      type: 'bar',
+      data: {
+        labels: Object.keys(mappa),
+        datasets: [{ label: 'Fatturato (€)', data: Object.values(mappa), backgroundColor: COLORI }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } } }
+    });
+  }
+
+  function disegnaSpeseCategoria(spese) {
+    const mappa = {};
+    spese.forEach(s => {
+      const nome = s.categorie_spesa ? s.categorie_spesa.nome : 'Non specificata';
+      mappa[nome] = (mappa[nome] || 0) + Number(s.importo);
+    });
+
+    new Chart(document.getElementById('chart-spese-categoria'), {
+      type: 'doughnut',
+      data: {
+        labels: Object.keys(mappa),
+        datasets: [{ data: Object.values(mappa), backgroundColor: COLORI }]
+      },
+      options: { responsive: true, plugins: { legend: { position: 'right' } } }
+    });
+  }
+</script>
+
+</body>
+</html>

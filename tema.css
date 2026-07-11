@@ -1,0 +1,14 @@
+/* Palette colori dell'app. Per cambiare i colori in futuro, basta modificare qui:
+   ogni pagina li legge da questo unico file. */
+
+:root {
+  --bg: #fbf2c4;          /* sfondo pagine, crema chiaro */
+  --bg-dark: color-mix(in srgb, #008585 70%, black 30%);    /* sfondo login: teal scurito per contrasto */
+  --card: color-mix(in srgb, #fbf2c4 60%, white 40%);       /* sfondo dei riquadri, più chiaro del bg */
+  --accent: #008585;                                        /* teal, pulsanti principali */
+  --accent-dark: color-mix(in srgb, #008585 65%, black 35%); /* teal scurito: header, hover pulsanti */
+  --text: color-mix(in srgb, #c7522a 12%, black 88%);       /* testo principale, quasi nero con tono caldo */
+  --text-muted: color-mix(in srgb, #74a892 55%, black 30%); /* testo secondario, verde-grigio */
+  --error: color-mix(in srgb, #c7522a 80%, black 15%);      /* avvisi/errori, ruggine scurito */
+  --border: color-mix(in srgb, #e5c185 40%, white 60%);     /* bordi, sabbia chiaro */
+}

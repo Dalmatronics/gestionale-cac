@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ordini — Gestionale</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-client.js"></script>
+<script src="menu.js"></script>
+<link rel="stylesheet" href="tema.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); }
+  header { position: fixed; top:0; left:0; right:0; z-index: 900; background: var(--accent-dark); color: white; padding: 16px 20px; }
+  header h1 { font-size: 18px; margin: 0; }
+  main { max-width: 680px; margin: 0 auto; padding: 76px 16px 60px; }
+
+  .card { background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 24px; }
+  .card h2 { font-size: 16px; margin: 0 0 18px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  input, textarea, select {
+    width: 100%; padding: 11px 13px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 15px; margin-bottom: 14px; font-family: inherit;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  .riga-doppia { display: flex; gap: 12px; }
+  .riga-doppia > div { flex: 1; }
+
+  .autocomplete-wrap { position: relative; }
+  .autocomplete-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 20;
+    margin-top: -10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    max-height: 220px; overflow-y: auto;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+  }
+  .autocomplete-item { padding: 10px 13px; font-size: 14px; cursor: pointer; }
+  .autocomplete-item:hover { background: color-mix(in srgb, var(--accent) 10%, var(--card) 90%); }
+  .autocomplete-item.nessuno { color: var(--text-muted); font-style: italic; cursor: default; }
+
+  h3.sezione { font-size: 14px; margin: 4px 0 10px; color: var(--text-muted); }
+
+  .riga-prodotto {
+    display: flex; gap: 8px; align-items: flex-start; margin-bottom: 10px;
+  }
+  .riga-prodotto .autocomplete-wrap { flex: 3; }
+  .riga-prodotto .autocomplete-wrap input[type="text"] { margin-bottom: 0; }
+  .riga-prodotto input.qta { flex: 1; margin-bottom: 0; }
+  .riga-prodotto input.prezzo { flex: 1; margin-bottom: 0; }
+  .riga-prodotto .subtotale { flex: 1; font-size: 14px; padding-top: 12px; text-align: right; color: var(--text-muted); }
+  .riga-prodotto button { padding: 10px; background: transparent; color: var(--error); border: none; font-size: 16px; cursor: pointer; }
+
+  .btn-aggiungi-riga { background: transparent; color: var(--accent-dark); border: 1px dashed var(--border); width: 100%; margin-bottom: 18px; }
+  .btn-aggiungi-riga:hover { background: #f0f4f2; }
+
+  .totale-riga { display: flex; justify-content: space-between; font-size: 16px; font-weight: 700; padding: 10px 0 18px; border-top: 1px solid var(--border); margin-top: 4px; }
+
+  .row-buttons { display: flex; gap: 10px; }
+  button { padding: 12px 18px; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--accent-dark); }
+  button.secondary { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+  button.secondary:hover { background: #f0f0f0; }
+
+  .msg { margin-top: 10px; font-size: 14px; }
+  .msg.error { color: var(--error); }
+  .msg.ok { color: var(--accent-dark); }
+
+  .ordine-row { padding: 12px 4px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+  .ordine-row:hover { background: #f8faf9; }
+  .ordine-row:last-child { border-bottom: none; }
+  .ordine-titolo { font-weight: 600; font-size: 15px; }
+  .ordine-dettaglio { font-size: 13px; color: var(--text-muted); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; }
+  .badge.pagato { background: color-mix(in srgb, var(--accent) 20%, white); color: color-mix(in srgb, var(--accent) 65%, black); }
+  .badge.non_pagato { background: color-mix(in srgb, var(--error) 20%, white); color: color-mix(in srgb, var(--error) 55%, black); }
+  .badge.parziale { background: color-mix(in srgb, var(--text-muted) 20%, white); color: color-mix(in srgb, var(--text-muted) 65%, black); }
+
+  #lista-empty { color: var(--text-muted); font-size: 14px; padding: 8px 4px; }
+</style>
+</head>
+<body style="visibility:hidden;">
+
+<header><h1>Ordini</h1></header>
+
+<main>
+
+  <div class="card">
+    <h2 id="card-titolo">Nuovo ordine</h2>
+    <form id="form-ordine">
+
+      <div class="riga-doppia">
+        <div class="autocomplete-wrap">
+          <label for="cliente_search">Cliente</label>
+          <input type="text" id="cliente_search" placeholder="Cerca cliente per nome… (vuoto = nessuno)" autocomplete="off">
+          <input type="hidden" id="cliente_id">
+          <div id="cliente_dropdown" class="autocomplete-dropdown" style="display:none;"></div>
+        </div>
+        <div>
+          <label for="canale">Canale</label>
+          <select id="canale">
+            <option value="social">Social</option>
+            <option value="market">Market</option>
+            <option value="telefono">Telefono</option>
+            <option value="email">Email</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="riga-doppia">
+        <div>
+          <label for="data">Data</label>
+          <input type="date" id="data">
+        </div>
+        <div>
+          <label for="stato">Stato ordine</label>
+          <select id="stato">
+            <option value="in_corso">In corso</option>
+            <option value="completato">Completato</option>
+            <option value="annullato">Annullato</option>
+          </select>
+        </div>
+      </div>
+
+      <h3 class="sezione">Prodotti</h3>
+      <div id="righe-container"></div>
+      <button type="button" class="btn-aggiungi-riga" id="btn-aggiungi-riga">+ Aggiungi prodotto</button>
+
+      <div class="totale-riga">
+        <span>Totale ordine</span>
+        <span id="totale-ordine">€ 0,00</span>
+      </div>
+
+      <div class="riga-doppia">
+        <div>
+          <label for="stato_pagamento">Pagamento</label>
+          <select id="stato_pagamento">
+            <option value="non_pagato">Non pagato</option>
+            <option value="parziale">Parziale</option>
+            <option value="pagato">Pagato</option>
+          </select>
+        </div>
+        <div>
+          <label for="importo_pagato">Importo incassato (€)</label>
+          <input type="number" id="importo_pagato" step="0.01" min="0" readonly>
+        </div>
+      </div>
+
+      <label for="modalita_pagamento">Modalità di pagamento</label>
+      <select id="modalita_pagamento">
+        <option value="">—</option>
+        <option value="contanti">Contanti</option>
+        <option value="carta">Carta</option>
+        <option value="satispay">Satispay</option>
+        <option value="bonifico">Bonifico</option>
+        <option value="altro">Altro</option>
+      </select>
+
+      <label for="note">Note</label>
+      <textarea id="note" rows="2"></textarea>
+
+      <div class="row-buttons">
+        <button type="submit" id="btn-salva">Salva ordine</button>
+        <button type="button" class="secondary" id="btn-annulla" style="display:none;">Annulla modifica</button>
+      </div>
+      <div class="msg" id="form-msg"></div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Ordini registrati</h2>
+    <div id="lista-ordini"></div>
+    <div id="lista-empty" style="display:none;">Nessun ordine ancora registrato.</div>
+  </div>
+
+</main>
+
+<script>
+  let idInModifica = null;
+  let clientiCache = [];
+  let prodottiCache = [];
+  let righeCorrenti = []; // { prodotto_id, quantita, prezzo_applicato }
+
+  const LABEL_CANALE = { social: "Social", market: "Market", telefono: "Telefono", email: "Email" };
+  const LABEL_STATO_PAGAMENTO = { pagato: "Pagato", non_pagato: "Non pagato", parziale: "Parziale" };
+
+  sb.auth.getSession().then(async ({ data: { session } }) => {
+    if (!session) { window.location.href = "index.html"; return; }
+    document.body.style.visibility = "visible";
+    await caricaClientiEProdotti();
+    const clienteIdUrl = new URLSearchParams(window.location.search).get('cliente_id');
+    if (clienteIdUrl) {
+      const cliente = clientiCache.find(c => c.id == clienteIdUrl);
+      if (cliente) selezionaCliente(cliente.id, cliente.nome_cognome);
+    }
+    document.getElementById('data').value = new Date().toISOString().slice(0, 10);
+    aggiungiRiga();
+    caricaOrdini();
+  });
+
+  async function caricaClientiEProdotti() {
+    const [{ data: clienti }, { data: prodotti }] = await Promise.all([
+      sb.from('clienti').select('id, nome_cognome').order('nome_cognome'),
+      sb.from('prodotti').select('id, nome, prezzo, attivo').order('nome'),
+    ]);
+    clientiCache = clienti || [];
+    prodottiCache = prodotti || [];
+  }
+
+  // --- Autocomplete cliente ---
+
+  const clienteSearch = document.getElementById('cliente_search');
+  const clienteDropdown = document.getElementById('cliente_dropdown');
+
+  function selezionaCliente(id, nome) {
+    document.getElementById('cliente_id').value = id;
+    clienteSearch.value = nome;
+    clienteDropdown.style.display = 'none';
+  }
+
+  function renderClienteDropdown(filtro) {
+    const testo = filtro.trim().toLowerCase();
+    const risultati = testo
+      ? clientiCache.filter(c => (c.nome_cognome || '').toLowerCase().includes(testo))
+      : clientiCache;
+
+    clienteDropdown.innerHTML = risultati.length === 0
+      ? `<div class="autocomplete-item nessuno">Nessun cliente trovato</div>`
+      : risultati.map(c => `<div class="autocomplete-item" data-id="${c.id}">${c.nome_cognome}</div>`).join('');
+
+    clienteDropdown.style.display = 'block';
+
+    clienteDropdown.querySelectorAll('.autocomplete-item[data-id]').forEach(el => {
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        const cliente = clientiCache.find(c => c.id == el.dataset.id);
+        selezionaCliente(cliente.id, cliente.nome_cognome);
+      });
+    });
+  }
+
+  clienteSearch.addEventListener('input', (e) => {
+    document.getElementById('cliente_id').value = '';
+    renderClienteDropdown(e.target.value);
+  });
+  clienteSearch.addEventListener('focus', (e) => renderClienteDropdown(e.target.value));
+  clienteSearch.addEventListener('blur', () => { clienteDropdown.style.display = 'none'; });
+
+  // --- Gestione righe prodotto dinamiche ---
+
+  function aggiungiRiga() {
+    righeCorrenti.push({ prodotto_id: '', quantita: 1, prezzo_applicato: 0 });
+    renderRighe();
+  }
+
+  function renderRighe() {
+    const container = document.getElementById('righe-container');
+    container.innerHTML = "";
+
+    righeCorrenti.forEach((riga, i) => {
+      const div = document.createElement('div');
+      div.className = "riga-prodotto";
+
+      const prodottoSelezionato = prodottiCache.find(p => p.id == riga.prodotto_id);
+
+      div.innerHTML = `
+        <div class="autocomplete-wrap">
+          <input type="text" class="prodotto-search" data-i="${i}" placeholder="Cerca prodotto…" autocomplete="off" value="${prodottoSelezionato ? prodottoSelezionato.nome : ''}">
+          <input type="hidden" class="prodotto-id" data-i="${i}" value="${riga.prodotto_id}">
+          <div class="prodotto-dropdown autocomplete-dropdown" data-i="${i}" style="display:none;"></div>
+        </div>
+        <input type="number" class="qta" data-i="${i}" min="0" step="1" value="${riga.quantita}">
+        <input type="number" class="prezzo" data-i="${i}" min="0" step="0.01" value="${riga.prezzo_applicato}">
+        <div class="subtotale">€ ${(riga.quantita * riga.prezzo_applicato).toFixed(2)}</div>
+        <button type="button" data-i="${i}" class="btn-rimuovi-riga" title="Rimuovi">✕</button>
+      `;
+      container.appendChild(div);
+    });
+
+    container.querySelectorAll('.prodotto-search').forEach(el => {
+      el.addEventListener('input', (e) => {
+        const i = e.target.dataset.i;
+        righeCorrenti[i].prodotto_id = '';
+        renderProdottoDropdown(i, e.target.value);
+      });
+      el.addEventListener('focus', (e) => renderProdottoDropdown(e.target.dataset.i, e.target.value));
+      el.addEventListener('blur', (e) => {
+        const dropdown = container.querySelector(`.prodotto-dropdown[data-i="${e.target.dataset.i}"]`);
+        if (dropdown) dropdown.style.display = 'none';
+      });
+    });
+    container.querySelectorAll('.qta').forEach(el => {
+      el.addEventListener('input', (e) => {
+        const i = e.target.dataset.i;
+        righeCorrenti[i].quantita = parseFloat(e.target.value) || 0;
+        aggiornaSubtotaleRiga(i);
+      });
+    });
+    container.querySelectorAll('.prezzo').forEach(el => {
+      el.addEventListener('input', (e) => {
+        const i = e.target.dataset.i;
+        righeCorrenti[i].prezzo_applicato = parseFloat(e.target.value) || 0;
+        aggiornaSubtotaleRiga(i);
+      });
+    });
+    container.querySelectorAll('.btn-rimuovi-riga').forEach(el => {
+      el.addEventListener('click', (e) => {
+        righeCorrenti.splice(e.target.dataset.i, 1);
+        renderRighe();
+      });
+    });
+
+    aggiornaTotale();
+  }
+
+  function renderProdottoDropdown(i, filtro) {
+    const dropdown = document.querySelector(`.prodotto-dropdown[data-i="${i}"]`);
+    if (!dropdown) return;
+
+    const testo = filtro.trim().toLowerCase();
+    const risultati = testo
+      ? prodottiCache.filter(p => p.nome.toLowerCase().includes(testo))
+      : prodottiCache;
+
+    dropdown.innerHTML = risultati.length === 0
+      ? `<div class="autocomplete-item nessuno">Nessun prodotto trovato</div>`
+      : risultati.map(p => `<div class="autocomplete-item" data-id="${p.id}">${p.nome}${p.attivo ? '' : ' (non attivo)'}</div>`).join('');
+
+    dropdown.style.display = 'block';
+
+    dropdown.querySelectorAll('.autocomplete-item[data-id]').forEach(el => {
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        selezionaProdotto(i, el.dataset.id);
+      });
+    });
+  }
+
+  function selezionaProdotto(i, prodottoId) {
+    const prodotto = prodottiCache.find(p => p.id == prodottoId);
+    righeCorrenti[i].prodotto_id = prodottoId;
+    righeCorrenti[i].prezzo_applicato = prodotto ? Number(prodotto.prezzo) : 0;
+    renderRighe();
+  }
+
+  function aggiornaSubtotaleRiga(i) {
+    const riga = righeCorrenti[i];
+    const div = document.querySelector(`.riga-prodotto .qta[data-i="${i}"]`).closest('.riga-prodotto');
+    div.querySelector('.subtotale').textContent = "€ " + (riga.quantita * riga.prezzo_applicato).toFixed(2);
+    aggiornaTotale();
+  }
+
+  function aggiornaTotale() {
+    const totale = righeCorrenti.reduce((acc, r) => acc + (r.quantita * r.prezzo_applicato), 0);
+    document.getElementById('totale-ordine').textContent = "€ " + totale.toFixed(2);
+    aggiornaImportoPagato(totale);
+    return totale;
+  }
+
+  function aggiornaImportoPagato(totale) {
+    const stato = document.getElementById('stato_pagamento').value;
+    const campoImporto = document.getElementById('importo_pagato');
+    if (stato === 'pagato') { campoImporto.value = totale.toFixed(2); campoImporto.readOnly = true; }
+    else if (stato === 'non_pagato') { campoImporto.value = "0.00"; campoImporto.readOnly = true; }
+    else { campoImporto.readOnly = false; }
+  }
+
+  document.getElementById('btn-aggiungi-riga').addEventListener('click', aggiungiRiga);
+  document.getElementById('stato_pagamento').addEventListener('change', () => aggiornaImportoPagato(aggiornaTotale()));
+
+  // --- Salvataggio ordine ---
+
+  const form = document.getElementById('form-ordine');
+  const msg = document.getElementById('form-msg');
+  const btnAnnulla = document.getElementById('btn-annulla');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    msg.textContent = "";
+
+    const righeValide = righeCorrenti.filter(r => r.prodotto_id && r.quantita > 0);
+    if (righeValide.length === 0) {
+      msg.textContent = "Aggiungi almeno un prodotto con quantità maggiore di zero.";
+      msg.className = "msg error";
+      return;
+    }
+
+    const datiOrdine = {
+      cliente_id: document.getElementById('cliente_id').value || null,
+      canale: document.getElementById('canale').value,
+      data: document.getElementById('data').value,
+      stato: document.getElementById('stato').value,
+      stato_pagamento: document.getElementById('stato_pagamento').value,
+      importo_pagato: parseFloat(document.getElementById('importo_pagato').value) || 0,
+      modalita_pagamento: document.getElementById('modalita_pagamento').value || null,
+      note: document.getElementById('note').value.trim() || null,
+    };
+
+    let ordineId = idInModifica;
+    let error;
+
+    if (idInModifica) {
+      ({ error } = await sb.from('ordini').update(datiOrdine).eq('id', idInModifica));
+      if (!error) await sb.from('righe_ordine').delete().eq('ordine_id', idInModifica);
+    } else {
+      const { data, error: errIns } = await sb.from('ordini').insert(datiOrdine).select().single();
+      error = errIns;
+      if (data) ordineId = data.id;
+    }
+
+    if (error) {
+      msg.textContent = "Errore: " + error.message;
+      msg.className = "msg error";
+      return;
+    }
+
+    const righeDaInserire = righeValide.map(r => ({
+      ordine_id: ordineId,
+      prodotto_id: r.prodotto_id,
+      quantita: r.quantita,
+      prezzo_applicato: r.prezzo_applicato,
+    }));
+    ({ error } = await sb.from('righe_ordine').insert(righeDaInserire));
+
+    if (error) {
+      msg.textContent = "Ordine salvato ma errore nelle righe: " + error.message;
+      msg.className = "msg error";
+      return;
+    }
+
+    msg.textContent = idInModifica ? "Ordine aggiornato." : "Ordine aggiunto.";
+    msg.className = "msg ok";
+    uscidaModifica();
+    caricaOrdini();
+  });
+
+  btnAnnulla.addEventListener('click', uscidaModifica);
+
+  function uscidaModifica() {
+    idInModifica = null;
+    form.reset();
+    document.getElementById('data').value = new Date().toISOString().slice(0, 10);
+    righeCorrenti = [];
+    aggiungiRiga();
+    document.getElementById('card-titolo').textContent = "Nuovo ordine";
+    document.getElementById('btn-salva').textContent = "Salva ordine";
+    btnAnnulla.style.display = "none";
+  }
+
+  // --- Elenco ordini ---
+
+  async function caricaOrdini() {
+    const { data: ordini, error } = await sb
+      .from('ordini')
+      .select('*, clienti(nome_cognome), righe_ordine(*)')
+      .order('data', { ascending: false });
+
+    const lista = document.getElementById('lista-ordini');
+    const vuoto = document.getElementById('lista-empty');
+    lista.innerHTML = "";
+
+    if (error || !ordini || ordini.length === 0) {
+      vuoto.style.display = "block";
+      return;
+    }
+    vuoto.style.display = "none";
+
+    ordini.forEach(o => {
+      const totale = (o.righe_ordine || []).reduce((acc, r) => acc + (r.quantita * r.prezzo_applicato), 0);
+      const chiTitolo = o.clienti ? o.clienti.nome_cognome : (LABEL_CANALE[o.canale] || o.canale);
+
+      const div = document.createElement('div');
+      div.className = "ordine-row";
+      div.innerHTML = `
+        <div>
+          <div class="ordine-titolo">${chiTitolo} — ${new Date(o.data).toLocaleDateString('it-IT')}</div>
+          <div class="ordine-dettaglio">
+            ${(o.righe_ordine || []).length} prodotto/i ·
+            <span class="badge ${o.stato_pagamento}">${LABEL_STATO_PAGAMENTO[o.stato_pagamento] || o.stato_pagamento}</span>
+          </div>
+        </div>
+        <div style="font-weight:700;">€ ${totale.toFixed(2)}</div>
+      `;
+      div.addEventListener('click', () => entraInModifica(o));
+      lista.appendChild(div);
+    });
+  }
+
+  function entraInModifica(o) {
+    idInModifica = o.id;
+    const clienteOrdine = clientiCache.find(c => c.id == o.cliente_id);
+    if (clienteOrdine) {
+      selezionaCliente(clienteOrdine.id, clienteOrdine.nome_cognome);
+    } else {
+      document.getElementById('cliente_id').value = '';
+      clienteSearch.value = '';
+    }
+    document.getElementById('canale').value = o.canale || 'social';
+    document.getElementById('data').value = o.data;
+    document.getElementById('stato').value = o.stato;
+    document.getElementById('stato_pagamento').value = o.stato_pagamento;
+    document.getElementById('modalita_pagamento').value = o.modalita_pagamento || '';
+    document.getElementById('note').value = o.note || '';
+
+    righeCorrenti = (o.righe_ordine || []).map(r => ({
+      prodotto_id: r.prodotto_id, quantita: r.quantita, prezzo_applicato: r.prezzo_applicato
+    }));
+    if (righeCorrenti.length === 0) righeCorrenti.push({ prodotto_id: '', quantita: 1, prezzo_applicato: 0 });
+    renderRighe();
+    document.getElementById('importo_pagato').value = Number(o.importo_pagato).toFixed(2);
+    if (o.stato_pagamento === 'parziale') document.getElementById('importo_pagato').readOnly = false;
+
+    document.getElementById('card-titolo').textContent = "Modifica ordine";
+    document.getElementById('btn-salva').textContent = "Salva modifiche";
+    btnAnnulla.style.display = "inline-block";
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+
+</body>
+</html>

@@ -88,6 +88,8 @@
     padding: 10px 18px;
   }
   .logout:hover { background: #f0f0f0; color: var(--text); }
+
+  .versione-app { text-align: center; font-size: 11px; color: var(--text-muted); margin-top: 18px; }
 </style>
 </head>
 <body>
@@ -103,6 +105,7 @@
       <input type="password" id="password" autocomplete="current-password">
       <button id="btn-login">Accedi</button>
       <div class="msg" id="login-msg"></div>
+      <div class="versione-app"></div>
     </div>
   </div>
 
@@ -136,10 +139,15 @@
       </div>
 
       <button class="logout" id="btn-logout">Esci</button>
+      <div class="versione-app"></div>
     </main>
   </div>
 
 <script>
+  // Aggiornare questa data ad ogni nuovo deploy del repository.
+  const VERSIONE_APP = "2026.07.12";
+  document.querySelectorAll('.versione-app').forEach(el => el.textContent = 'v' + VERSIONE_APP);
+
   const loginView = document.getElementById('login-view');
   const homeView = document.getElementById('home-view');
   const msg = document.getElementById('login-msg');

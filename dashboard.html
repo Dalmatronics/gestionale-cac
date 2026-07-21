@@ -28,6 +28,14 @@
   .card h2 { font-size: 15px; margin: 0 0 18px; }
   .card canvas { max-height: 280px; }
 
+  .selettore-anno { margin-bottom: 14px; }
+  .selettore-anno label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  .selettore-anno select {
+    width: auto; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 14px; font-family: inherit;
+  }
+  .selettore-anno select:focus { outline: none; border-color: var(--accent); }
+
   #stato-vuoto { color: var(--text-muted); font-size: 14px; text-align: center; padding: 40px 0; }
 </style>
 </head>
@@ -59,6 +67,15 @@
   <div class="card">
     <h2>Andamento mensile — fatturato vs spese</h2>
     <canvas id="chart-andamento"></canvas>
+  </div>
+
+  <div class="card">
+    <h2>Crescita cumulata — fatturato vs spese</h2>
+    <div class="selettore-anno">
+      <label for="anno_crescita">Anno</label>
+      <select id="anno_crescita"></select>
+    </div>
+    <canvas id="chart-crescita"></canvas>
   </div>
 
   <div class="card">
@@ -109,6 +126,7 @@
     valUtile.classList.add(utile >= 0 ? 'positivo' : 'negativo');
 
     disegnaAndamentoMensile(ordiniValidi, spese || []);
+    disegnaCrescitaCumulata(ordiniValidi, spese || []);
     disegnaCanali(ordiniValidi);
     disegnaSpeseCategoria(spese || []);
   }
@@ -119,6 +137,21 @@
     righe.forEach(r => {
       const mese = estraiData(r).slice(0, 7); // "2026-07"
       mappa[mese] = (mappa[mese] || 0) + estraiValore(r);
+    });
+    return mappa;
+  }
+
+  const MESI_LABEL = ['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'];
+
+  // Raggruppa un array per anno, con un totale per ciascuno dei 12 mesi
+  function raggruppaPerAnnoMese(righe, estraiData, estraiValore) {
+    const mappa = {}; // { "2026": [tot_gen, tot_feb, ...] }
+    righe.forEach(r => {
+      const data = estraiData(r);
+      const anno = data.slice(0, 4);
+      const mese = parseInt(data.slice(5, 7), 10) - 1;
+      if (!mappa[anno]) mappa[anno] = Array(12).fill(0);
+      mappa[anno][mese] += estraiValore(r);
     });
     return mappa;
   }
@@ -143,6 +176,50 @@
       },
       options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
     });
+  }
+
+  let graficoCrescita = null;
+
+  function disegnaCrescitaCumulata(ordini, spese) {
+    const fatturatoPerAnnoMese = raggruppaPerAnnoMese(
+      ordini, o => o.data,
+      o => (o.righe_ordine || []).reduce((acc, r) => acc + r.quantita * r.prezzo_applicato, 0)
+    );
+    const spesePerAnnoMese = raggruppaPerAnnoMese(spese, s => s.data, s => Number(s.importo));
+
+    const anni = [...new Set([...Object.keys(fatturatoPerAnnoMese), ...Object.keys(spesePerAnnoMese)])].sort();
+    const annoCorrente = String(new Date().getFullYear());
+
+    const selectAnno = document.getElementById('anno_crescita');
+    selectAnno.innerHTML = anni.map(a => `<option value="${a}">${a}</option>`).join('');
+    selectAnno.value = anni.includes(annoCorrente) ? annoCorrente : anni[anni.length - 1] || '';
+
+    function disegna() {
+      const anno = selectAnno.value;
+      const fatturatoMensile = fatturatoPerAnnoMese[anno] || Array(12).fill(0);
+      const speseMensili = spesePerAnnoMese[anno] || Array(12).fill(0);
+
+      let cum = 0;
+      const fatturatoCumulato = fatturatoMensile.map(v => (cum += v));
+      cum = 0;
+      const speseCumulate = speseMensili.map(v => (cum += v));
+
+      if (graficoCrescita) graficoCrescita.destroy();
+      graficoCrescita = new Chart(document.getElementById('chart-crescita'), {
+        type: 'line',
+        data: {
+          labels: MESI_LABEL,
+          datasets: [
+            { label: 'Fatturato cumulato', data: fatturatoCumulato, borderColor: '#3d6b5c', backgroundColor: '#3d6b5c', tension: 0.2 },
+            { label: 'Spese cumulate', data: speseCumulate, borderColor: '#b3452d', backgroundColor: '#b3452d', tension: 0.2 },
+          ]
+        },
+        options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+      });
+    }
+
+    selectAnno.addEventListener('change', disegna);
+    disegna();
   }
 
   function disegnaCanali(ordini) {

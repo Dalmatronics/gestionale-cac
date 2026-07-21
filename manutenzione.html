@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manutenzione — Gestionale</title>
+<link rel="icon" href="logo.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="supabase-client.js"></script>
+<script src="menu.js"></script>
+<link rel="stylesheet" href="tema.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); font-family: -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); }
+  header { position: fixed; top:0; left:0; right:0; z-index: 900; background: var(--accent-dark); color: white; padding: 16px 20px; }
+  header h1 { font-size: 18px; margin: 0; }
+  main { max-width: 640px; margin: 0 auto; padding: 76px 16px 60px; }
+
+  .card { background: var(--card); border-radius: 12px; padding: 24px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 24px; }
+  .card h2 { font-size: 16px; margin: 0 0 8px; }
+  .card p.spiegazione { font-size: 13px; color: var(--text-muted); margin: 0 0 18px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  select {
+    width: 100%; padding: 11px 13px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 15px; margin-bottom: 14px; font-family: inherit;
+  }
+  select:focus { outline: none; border-color: var(--accent); }
+
+  button { padding: 12px 18px; background: var(--accent); color: white; border: none; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--accent-dark); }
+  button:disabled { opacity: 0.6; cursor: default; }
+
+  .msg { margin-top: 10px; font-size: 14px; }
+  .msg.error { color: var(--error); }
+  .msg.ok { color: var(--accent-dark); }
+</style>
+</head>
+<body style="visibility:hidden;">
+
+<header><h1>Manutenzione</h1></header>
+
+<main>
+
+  <div class="card">
+    <h2>Backup completo del database</h2>
+    <p class="spiegazione">Scarica un file .zip con un file JSON per ciascuna tabella del database.</p>
+    <button type="button" id="btn-backup-completo">Scarica backup completo</button>
+    <div class="msg" id="msg-completo"></div>
+  </div>
+
+  <div class="card">
+    <h2>Backup di una singola tabella</h2>
+    <p class="spiegazione">Seleziona una tabella e scarica il suo contenuto in formato JSON.</p>
+    <label for="tabella_select">Tabella</label>
+    <select id="tabella_select"></select>
+    <button type="button" id="btn-backup-tabella">Scarica backup tabella</button>
+    <div class="msg" id="msg-tabella"></div>
+  </div>
+
+</main>
+
+<script>
+  const TABELLE = [
+    { nome: 'clienti', etichetta: 'Clienti' },
+    { nome: 'prodotti', etichetta: 'Prodotti' },
+    { nome: 'ordini', etichetta: 'Ordini' },
+    { nome: 'righe_ordine', etichetta: 'Righe ordine' },
+    { nome: 'spese', etichetta: 'Spese' },
+    { nome: 'categorie_spesa', etichetta: 'Categorie spesa' },
+    { nome: 'modalita_consegna', etichetta: 'Modalità di consegna' },
+    { nome: 'profili', etichetta: 'Profili utenti' },
+  ];
+
+  const PAGINA_DIM = 1000;
+
+  sb.auth.getSession().then(async ({ data: { session } }) => {
+    if (!session) { window.location.href = "index.html"; return; }
+
+    const { data: { user } } = await sb.auth.getUser();
+    const { data: profilo, error } = await sb.from('profili').select('ruolo').eq('id', user.id).single();
+    if (error || !profilo || profilo.ruolo !== 'admin') {
+      window.location.href = "index.html";
+      return;
+    }
+
+    document.body.style.visibility = "visible";
+    popolaSelectTabelle();
+  });
+
+  function popolaSelectTabelle() {
+    const select = document.getElementById('tabella_select');
+    select.innerHTML = TABELLE.map(t => `<option value="${t.nome}">${t.etichetta}</option>`).join('');
+  }
+
+  async function scaricaTuttaLaTabella(nomeTabella) {
+    let righe = [];
+    let da = 0;
+    while (true) {
+      const { data, error } = await sb.from(nomeTabella).select('*').range(da, da + PAGINA_DIM - 1);
+      if (error) throw error;
+      righe = righe.concat(data || []);
+      if (!data || data.length < PAGINA_DIM) break;
+      da += PAGINA_DIM;
+    }
+    return righe;
+  }
+
+  function scaricaFile(nomeFile, contenuto, tipo) {
+    const blob = new Blob([contenuto], { type: tipo });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nomeFile;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function dataOdierna() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  // --- Backup completo ---
+
+  const btnCompleto = document.getElementById('btn-backup-completo');
+  const msgCompleto = document.getElementById('msg-completo');
+
+  btnCompleto.addEventListener('click', async () => {
+    btnCompleto.disabled = true;
+    msgCompleto.textContent = "Preparazione del backup in corso…";
+    msgCompleto.className = "msg";
+
+    try {
+      const zip = new JSZip();
+      for (const t of TABELLE) {
+        const righe = await scaricaTuttaLaTabella(t.nome);
+        zip.file(`${t.nome}.json`, JSON.stringify(righe, null, 2));
+      }
+      const contenuto = await zip.generateAsync({ type: 'blob' });
+      scaricaFile(`backup_completo_${dataOdierna()}.zip`, contenuto, 'application/zip');
+      msgCompleto.textContent = "Backup completato.";
+      msgCompleto.className = "msg ok";
+    } catch (err) {
+      msgCompleto.textContent = "Errore durante il backup: " + err.message;
+      msgCompleto.className = "msg error";
+    } finally {
+      btnCompleto.disabled = false;
+    }
+  });
+
+  // --- Backup singola tabella ---
+
+  const btnTabella = document.getElementById('btn-backup-tabella');
+  const msgTabella = document.getElementById('msg-tabella');
+
+  btnTabella.addEventListener('click', async () => {
+    const nomeTabella = document.getElementById('tabella_select').value;
+    btnTabella.disabled = true;
+    msgTabella.textContent = "Preparazione del backup in corso…";
+    msgTabella.className = "msg";
+
+    try {
+      const righe = await scaricaTuttaLaTabella(nomeTabella);
+      scaricaFile(`backup_${nomeTabella}_${dataOdierna()}.json`, JSON.stringify(righe, null, 2), 'application/json');
+      msgTabella.textContent = "Backup completato.";
+      msgTabella.className = "msg ok";
+    } catch (err) {
+      msgTabella.textContent = "Errore durante il backup: " + err.message;
+      msgTabella.className = "msg error";
+    } finally {
+      btnTabella.disabled = false;
+    }
+  });
+</script>
+
+</body>
+</html>

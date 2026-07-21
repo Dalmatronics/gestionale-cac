@@ -12,6 +12,7 @@ Web app di gestione per clienti, prodotti, ordini e spese, con dashboard e login
 | `prodotti.html` | Gestione prodotti |
 | `ordini.html` | Gestione ordini |
 | `spese.html` | Gestione spese |
+| `manutenzione.html` | Backup del database, visibile solo agli utenti con ruolo `admin` |
 
 ## Struttura tecnica
 

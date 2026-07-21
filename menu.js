@@ -10,7 +10,9 @@ const VOCI_MENU = [
   { nome: "Dashboard", link: "dashboard.html" },
 ];
 
-function iniettaMenu() {
+const VOCE_MENU_ADMIN = { nome: "Manutenzione", link: "manutenzione.html" };
+
+async function iniettaMenu() {
   const stile = document.createElement('style');
   stile.textContent = `
     #btn-menu {
@@ -85,7 +87,14 @@ function iniettaMenu() {
     header.prepend(logo);
   }
 
-  const voci = VOCI_MENU.map(v => `<a href="${v.link}">${v.nome}</a>`).join('');
+  let vociMenu = VOCI_MENU;
+  const { data: { user } } = await sb.auth.getUser();
+  if (user) {
+    const { data: profilo } = await sb.from('profili').select('ruolo').eq('id', user.id).single();
+    if (profilo && profilo.ruolo === 'admin') vociMenu = [...VOCI_MENU, VOCE_MENU_ADMIN];
+  }
+
+  const voci = vociMenu.map(v => `<a href="${v.link}">${v.nome}</a>`).join('');
 
   const html = `
     <button id="btn-menu" aria-label="Apri menu">☰</button>
